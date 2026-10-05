@@ -1,0 +1,33 @@
+# Données et fichiers volumineux / exports
+*.csv
+*.xlsx
+*.xls
+*.ods
+*.db
+*.sqlite
+*.sqlite3
+data/exports/
+data/raw/
+
+# Environnements virtuels Python
+.venv/
+venv/
+ENV/
+env/
+
+# Cache Python et builds
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+.coverage
+
+# Fichiers système
+.DS_Store
+Thumbs.db
+
+# Variables d'environnement / Secrets
+.env
+*.pem
+*.key
