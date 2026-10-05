@@ -1,0 +1,22 @@
+---
+description: Règles métier et contraintes de développement pour la simulation comptable
+globs: **/*
+alwaysApply: true
+---
+
+# Règles du projet Moteur Comptable
+
+## Contexte & Métier
+- Le document de référence est `@docs/PROJET_MODELISATION_COMPTABLE_V01.md`.
+- Appliquer strictement les principes du Plan Comptable Général (PCG) français.
+- Respecter le principe de la partie double : tout mouvement comptable doit comporter au moins une ligne au Débit et une ligne au Crédit avec Total Débit == Total Crédit.
+- Valorisation des sorties de stock selon la méthode du CUMP HT.
+- Amortissements linéaires calculés au jour près (prorata temporis, base 365 jours).
+
+## Standard de Code
+- Python 3.10+ avec typage systématique (Type Hints).
+- Séparation stricte des responsabilités :
+  - `src/core/` : Moteur de comptabilité générale (comptes, écritures, journal, balance).
+  - `src/modules/` : Métier spécifique (stocks, amortissements, états financiers).
+  - `src/ui/` : Interface utilisateur.
+- Code lisible, concis et documenté en français avec explication des règles comptables sous-jacentes.

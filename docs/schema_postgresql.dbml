@@ -1,0 +1,286 @@
+// Magasin de jeux vidéo — modèle pédagogique PCG
+// Coller ce fichier dans https://dbdiagram.io
+//
+// Couche 1 : tables de saisie / référentiels (source de vérité)
+// Couche 2 : journal en partie double (généré ou posté)
+// Couche 3 : états (balance, CR, bilan, stocks, trésorerie) = vues, pas des tables
+
+Enum destination_compte {
+  bilan_actif
+  bilan_passif
+  cr_charges
+  cr_produits
+}
+
+Enum code_journal {
+  VE  // ventes
+  HA  // achats / charges
+  BQ  // banque
+  OD  // opérations diverses (apports, stocks, amortissements)
+  AN  // à-nouveaux
+}
+
+Enum nature_produit {
+  jeu
+  console
+}
+
+Enum nature_achat {
+  achat
+  retour
+}
+
+Enum type_apport {
+  capital      // 1013
+  subvention   // 131
+  emprunt      // 164
+}
+
+Enum origine_ecriture {
+  vente_marchandise
+  vente_service
+  encaissement_service
+  achat_marchandise
+  paiement_fournisseur
+  charge
+  paiement_charge
+  immobilisation
+  paiement_immo
+  apport
+  echeance_emprunt
+  stock
+  dotation_amortissement
+  tva
+}
+
+// ---------------------------------------------------------------------------
+// Référentiels
+// ---------------------------------------------------------------------------
+
+Table parametre {
+  id smallint [pk, default: 1, note: 'Une seule ligne : le dashboard (B2/B3)']
+  date_debut date [not null, note: 'Début de période de travail']
+  date_fin date [not null, note: 'Clôture de période de travail']
+  seuil_immobilisation_ht numeric(12,2) [default: 500, note: 'En dessous : charge 6063']
+  base_jours_amortissement smallint [default: 365]
+
+  Note: 'Changer les dates recalcule Facturé/Payé, donc le journal de la période.'
+}
+
+Table compte {
+  numero integer [pk, note: 'Numéro PCG (entier, jamais du texte)']
+  libelle varchar(120) [not null]
+  classe smallint [not null, note: '1er chiffre du numéro — généré en Postgres']
+  destination destination_compte [not null]
+
+  Note: 'Plan comptable. Classes 1-5 → bilan, 6-7 → compte de résultat.'
+}
+
+Table tiers {
+  id integer [pk, increment]
+  nom varchar(120) [not null, unique]
+  est_fournisseur boolean [not null, default: false]
+  est_client boolean [not null, default: false]
+  est_organisme boolean [not null, default: false, note: 'URSSAF, banque prêteuse…']
+
+  Note: 'Annuaire unique (distributeurs, Facebook, SumUp, Fondateur…).'
+}
+
+Table produit {
+  id integer [pk, increment]
+  tiers_id integer [ref: > tiers.id, note: 'Fournisseur catalogue']
+  libelle varchar(120) [not null, unique]
+  nature nature_produit [not null]
+  prix_achat_ht numeric(12,2) [not null]
+  prix_vente_ht numeric(12,2) [not null]
+  taux_tva numeric(5,4) [not null, default: 0.20]
+  delai_paiement_jours smallint [note: 'NULL = AR (comptant)']
+
+  Note: 'Onglet 31_Gamme_Produits. Le TTC se calcule : HT × (1 + TVA).'
+}
+
+// ---------------------------------------------------------------------------
+// Pièces de saisie — on ne stocke PAS les statuts ni les montants dérivés
+// Facturé  = date_facture  <= parametre.date_fin
+// Payé     = date_paiement <= parametre.date_fin
+// ---------------------------------------------------------------------------
+
+Table vente_marchandise {
+  id integer [pk, increment]
+  code varchar(20) [note: 'Pièce / n° de facture']
+  date_facture date [not null]
+  produit_id integer [ref: > produit.id]
+  quantite numeric(12,3) [not null]
+  prix_unitaire_ht numeric(12,2) [not null]
+  taux_tva numeric(5,4) [not null, default: 0.20]
+  date_paiement date [note: 'NULL si crédit client (411) non encaissé']
+
+  Note: 'Onglet 10. HT/TVA/TTC, CUMP et statuts sont calculés. Écriture comptant : 512 / 707 + 44571.'
+}
+
+Table vente_service {
+  id integer [pk, increment]
+  code varchar(20)
+  date_facture date [not null]
+  libelle varchar(200) [not null, note: 'Ex. Animation atelier médiathèque']
+  jours numeric(8,2) [not null]
+  prix_unitaire_ht numeric(12,2) [not null]
+  taux_tva numeric(5,4) [not null, default: 0.20]
+  delai_paiement_jours smallint
+  date_paiement date
+
+  Note: 'Onglet 11 (706). Facture : 411 / 706 + 44571. Encaissement : 512 / 411.'
+}
+
+Table achat_marchandise {
+  id integer [pk, increment]
+  date_commande date [not null]
+  produit_id integer [ref: > produit.id]
+  tiers_id integer [ref: > tiers.id]
+  quantite numeric(12,3) [not null]
+  prix_unitaire_ht numeric(12,2) [not null]
+  taux_tva numeric(5,4) [not null, default: 0.20]
+  delai_paiement_jours smallint
+  date_paiement date
+  nature nature_achat [not null, default: 'achat']
+
+  Note: 'Onglet 20 (607). Facture : 607 + 44566 / 401. Paiement : 401 / 512.'
+}
+
+Table charge {
+  id integer [pk, increment]
+  date_facture date [not null]
+  tiers_id integer [ref: > tiers.id]
+  libelle varchar(200) [not null]
+  compte_numero integer [ref: > compte.numero, note: 'Compte de charge 6xx']
+  montant_ht numeric(12,2) [not null]
+  taux_tva numeric(5,4) [not null, default: 0.20]
+  delai_paiement_jours smallint
+  date_paiement date
+
+  Note: 'Onglet 21 (613, 623, 626, 6063…). Facture : 6xx + 44566 / 401.'
+}
+
+Table immobilisation {
+  id integer [pk, increment]
+  date_acquisition date [not null]
+  tiers_id integer [ref: > tiers.id]
+  bien varchar(200) [not null]
+  compte_numero integer [ref: > compte.numero, note: 'Compte 21xx']
+  duree_ans numeric(6,2) [not null]
+  montant_ht numeric(12,2) [not null]
+  taux_tva numeric(5,4) [not null, default: 0.20]
+  delai_paiement_jours smallint
+  date_paiement date
+
+  Note: 'Onglet 23. Seuil 500 € HT. Amortissement linéaire, prorata jour, base 365. Facture : 21xx + 44562 / 404.'
+}
+
+Table apport {
+  id integer [pk, increment]
+  date_operation date [not null]
+  type type_apport [not null]
+  compte_numero integer [ref: > compte.numero]
+  tiers_id integer [ref: > tiers.id]
+  montant numeric(12,2) [not null]
+
+  Note: 'Onglet 40 — apports. Écriture : 512 / 1013, 131 ou 164.'
+}
+
+Table emprunt {
+  id integer [pk, increment]
+  date_deblocage date [not null]
+  organisme_id integer [ref: > tiers.id]
+  capital numeric(12,2) [not null]
+  taux_annuel numeric(8,6) [not null]
+  duree_mois integer [not null]
+  date_premiere_echeance date [not null]
+
+  Note: 'Paramètres emprunt. Seuls les intérêts (661) sont une charge ; le capital diminue 164.'
+}
+
+Table echeance_emprunt {
+  id integer [pk, increment]
+  emprunt_id integer [ref: > emprunt.id]
+  date_echeance date [not null]
+  interets numeric(12,2) [not null]
+  capital_rembourse numeric(12,2) [not null]
+  date_paiement date
+
+  Note: 'Échéancier (calculé). Écriture : 661 + 164 / 512.'
+}
+
+// ---------------------------------------------------------------------------
+// Moteur — journal général / grand livre
+// En mode pédagogique : régénéré par journal(debut, fin)
+// En mode clôturé : lignes immuables
+// ---------------------------------------------------------------------------
+
+Table ecriture {
+  id integer [pk, increment]
+  date_ecriture date [not null]
+  journal code_journal [not null]
+  piece varchar(40) [not null, note: 'Référence de pièce']
+  origine origine_ecriture [not null]
+  origine_id integer [note: 'Id de la ligne de saisie source']
+  libelle varchar(200)
+
+  indexes {
+    (date_ecriture, journal, piece)
+    (origine, origine_id)
+  }
+
+  Note: 'En-tête d’écriture. Contrainte : SUM(lignes.debit) = SUM(lignes.credit).'
+}
+
+Table ligne_ecriture {
+  id integer [pk, increment]
+  ecriture_id integer [ref: > ecriture.id]
+  compte_numero integer [ref: > compte.numero]
+  libelle varchar(200) [not null]
+  debit numeric(14,2) [not null, default: 0]
+  credit numeric(14,2) [not null, default: 0]
+
+  Note: 'Une ligne = un seul sens (débit XOR crédit). Colonnes 60-Journal.'
+}
+
+Table plan_amortissement_mois {
+  id integer [pk, increment]
+  immobilisation_id integer [ref: > immobilisation.id]
+  compte_numero integer [ref: > compte.numero]
+  date_debut date [not null]
+  date_fin date [not null]
+  dotation numeric(12,2) [not null]
+  cumul numeric(12,2) [not null]
+  vnc numeric(12,2) [not null]
+
+  Note: 'Onglet 24 — généré, pas saisi. Écriture mensuelle : 6811 / 2818.'
+}
+
+// ---------------------------------------------------------------------------
+// Groupes visuels dbdiagram
+// ---------------------------------------------------------------------------
+
+TableGroup referentiels {
+  parametre
+  compte
+  tiers
+  produit
+}
+
+TableGroup saisie {
+  vente_marchandise
+  vente_service
+  achat_marchandise
+  charge
+  immobilisation
+  apport
+  emprunt
+  echeance_emprunt
+}
+
+TableGroup moteur {
+  ecriture
+  ligne_ecriture
+  plan_amortissement_mois
+}
